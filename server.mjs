@@ -2,19 +2,10 @@ import "dotenv/config";
 import express from "express";
 import OpenAI from "openai";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
-import {
-  AlignmentType,
-  BorderStyle,
-  Document,
-  Packer,
-  Paragraph,
-  Table,
-  TableCell,
-  TableRow,
-  TextRun,
-  WidthType
-} from "docx";
+import PizZip from "pizzip";
+import Docxtemplater from "docxtemplater";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -29,6 +20,7 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "100kb" }));
 
+// Simple in-memory rate limiter: 20 requests per IP per hour.
 const buckets = new Map();
 const WINDOW_MS = 60 * 60 * 1000;
 const MAX_REQUESTS = 20;
@@ -37,20 +29,24 @@ function rateLimit(req, res, next) {
   const key = req.ip || req.socket.remoteAddress || "unknown";
   const now = Date.now();
   let bucket = buckets.get(key);
+
   if (!bucket || now - bucket.startedAt > WINDOW_MS) {
     bucket = { startedAt: now, count: 0 };
   }
+
   bucket.count += 1;
   buckets.set(key, bucket);
 
   if (bucket.count > MAX_REQUESTS) {
     return res.status(429).json({ error: "使用次數過多，請稍後再試。" });
   }
+
   next();
 }
 
 function safeJsonParse(text) {
   if (!text || typeof text !== "string") return null;
+
   const cleaned = text
     .trim()
     .replace(/^```json\s*/i, "")
@@ -68,6 +64,7 @@ function safeJsonParse(text) {
       return JSON.parse(cleaned.slice(start, end + 1));
     } catch {}
   }
+
   return null;
 }
 
@@ -75,16 +72,60 @@ function countChars(text) {
   return Array.from(String(text || "").replace(/\s/g, "")).length;
 }
 
+function cleanText(value, max = 200) {
+  return String(value || "").trim().slice(0, max);
+}
+
+function normalizeSummaryOptions(value) {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set();
+  const result = [];
+
+  for (const item of value) {
+    const text = cleanText(item, 80);
+    if (!text || countChars(text) > 30) continue;
+    const key = text.replace(/\s/g, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(text);
+    if (result.length === 8) break;
+  }
+
+  return result;
+}
+
+function normalizeKeywordOptions(value) {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set();
+  const result = [];
+
+  for (const group of value) {
+    if (!Array.isArray(group)) continue;
+    const cleaned = group.slice(0, 3).map((x) => cleanText(x, 60)).filter(Boolean);
+    if (cleaned.length !== 3) continue;
+
+    const key = cleaned.map((x) => x.toLowerCase().replace(/\s+/g, " ")).join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+    if (result.length === 8) break;
+  }
+
+  return result;
+}
+
 function validatePayload(data) {
   if (!data || !Array.isArray(data.sentences) || !Array.isArray(data.vocabulary)) {
     return false;
   }
-  if (typeof data.summary_zh !== "string" || countChars(data.summary_zh) > 30) {
-    return false;
-  }
-  if (!Array.isArray(data.keywords) || data.keywords.length !== 3) {
-    return false;
-  }
+
+  const summaries = normalizeSummaryOptions(data.summary_options);
+  const keywordGroups = normalizeKeywordOptions(data.keyword_options);
+
+  if (summaries.length !== 8 || keywordGroups.length !== 8) return false;
+
   return data.sentences.every(
     (item) =>
       item &&
@@ -104,9 +145,7 @@ app.post("/api/analyze", rateLimit, async (req, res) => {
     }
 
     if (article.length > 24000) {
-      return res.status(400).json({
-        error: "文章太長，請控制在約 24,000 個字元以內。"
-      });
+      return res.status(400).json({ error: "文章太長，請控制在約 24,000 個字元以內。" });
     }
 
     const instructions = `
@@ -117,8 +156,26 @@ Do not use Markdown fences.
 
 Required JSON shape:
 {
-  "summary_zh": "Traditional Chinese article summary, maximum 30 Chinese characters",
-  "keywords": ["keyword1", "keyword2", "keyword3"],
+  "summary_options": [
+    "Traditional Chinese summary 1",
+    "Traditional Chinese summary 2",
+    "Traditional Chinese summary 3",
+    "Traditional Chinese summary 4",
+    "Traditional Chinese summary 5",
+    "Traditional Chinese summary 6",
+    "Traditional Chinese summary 7",
+    "Traditional Chinese summary 8"
+  ],
+  "keyword_options": [
+    ["keyword or short phrase", "keyword or short phrase", "keyword or short phrase"],
+    ["keyword or short phrase", "keyword or short phrase", "keyword or short phrase"],
+    ["keyword or short phrase", "keyword or short phrase", "keyword or short phrase"],
+    ["keyword or short phrase", "keyword or short phrase", "keyword or short phrase"],
+    ["keyword or short phrase", "keyword or short phrase", "keyword or short phrase"],
+    ["keyword or short phrase", "keyword or short phrase", "keyword or short phrase"],
+    ["keyword or short phrase", "keyword or short phrase", "keyword or short phrase"],
+    ["keyword or short phrase", "keyword or short phrase", "keyword or short phrase"]
+  ],
   "sentences": [
     {"en": "exact English sentence", "zh": "natural Traditional Chinese translation"}
   ],
@@ -135,21 +192,26 @@ Rules:
 1. Split the FULL article into sensible sentence-level chunks. Do not omit content.
 2. Preserve the English meaning and wording faithfully; only repair obvious line-break artifacts.
 3. Translate every sentence into natural Traditional Chinese used in Taiwan.
-4. summary_zh must capture the central idea of the FULL article in no more than 30 Chinese characters, excluding spaces. Keep it suitable for a school worksheet.
-5. keywords must contain EXACTLY 3 English single-word keywords that best represent the article's central ideas. Use one word per item, not phrases.
-6. Vocabulary: select 24-45 useful words or phrases from THIS article that are worthwhile for a learner around TOEIC 300+ and above.
-7. Do not include extremely basic words such as the, and, is, have, good, people unless they have a special phrase meaning.
-8. Prefer useful academic, business, economic, workplace, and high-frequency reading vocabulary.
-9. Part of speech must match the usage in the article.
-10. Keep Chinese meanings short and memorization-friendly.
-11. Remove duplicates and use the base form where appropriate.
-12. Output JSON only.
+4. Create EXACTLY 8 summary_options. Each summary must be no more than 30 Chinese characters excluding spaces.
+5. All 8 summaries must be faithful to the same article. They should express the central idea in meaningfully different wording or emphasis, not merely swap synonyms. Accuracy is more important than forced variety.
+6. Avoid near-duplicate summaries. Use different sentence structures and, when the article supports it, different legitimate angles of emphasis.
+7. Create EXACTLY 8 keyword_options. Each option must contain EXACTLY 3 English items.
+8. A keyword item may be either one word or a short English phrase of about 2-4 words, such as "income inequality" or "AI-driven automation".
+9. Every keyword or phrase must be directly supported by the article. Prefer words and phrases that actually appear in the article. Do not invent unrelated concepts just to create variety.
+10. Make the 8 keyword groups meaningfully different where the article allows, while still representing the article accurately.
+11. Vocabulary: select 24-45 useful words or phrases from THIS article that are worthwhile for a learner around TOEIC 300+ and above.
+12. Do not include extremely basic words such as the, and, is, have, good, people unless they have a special phrase meaning.
+13. Prefer useful academic, business, economic, workplace, and high-frequency reading vocabulary.
+14. Part of speech must match the usage in the article.
+15. Keep Chinese meanings short and memorization-friendly.
+16. Remove duplicates and use the base form where appropriate.
+17. Output JSON only.
 `.trim();
 
     const response = await client.responses.create({
       model,
       store: false,
-      max_output_tokens: 14000,
+      max_output_tokens: 15000,
       input: [
         { role: "system", content: instructions },
         { role: "user", content: article }
@@ -163,12 +225,22 @@ Rules:
             type: "object",
             additionalProperties: false,
             properties: {
-              summary_zh: { type: "string" },
-              keywords: {
+              summary_options: {
                 type: "array",
-                minItems: 3,
-                maxItems: 3,
+                minItems: 8,
+                maxItems: 8,
                 items: { type: "string" }
+              },
+              keyword_options: {
+                type: "array",
+                minItems: 8,
+                maxItems: 8,
+                items: {
+                  type: "array",
+                  minItems: 3,
+                  maxItems: 3,
+                  items: { type: "string" }
+                }
               },
               sentences: {
                 type: "array",
@@ -196,7 +268,7 @@ Rules:
                 }
               }
             },
-            required: ["summary_zh", "keywords", "sentences", "vocabulary"]
+            required: ["summary_options", "keyword_options", "sentences", "vocabulary"]
           }
         }
       }
@@ -205,29 +277,34 @@ Rules:
     const parsed = safeJsonParse(response.output_text);
 
     if (!validatePayload(parsed)) {
-      console.error("Invalid model JSON:", response.output_text?.slice(0, 1500));
+      console.error("Invalid model JSON:", response.output_text?.slice(0, 1800));
       return res.status(502).json({
         error: "文章分析結果格式異常，請再按一次。"
       });
     }
 
-    const clean = {
-      summary_zh: String(parsed.summary_zh || "").trim(),
-      keywords: parsed.keywords.slice(0, 3).map((x) => String(x || "").trim()).filter(Boolean),
-      sentences: parsed.sentences.slice(0, 300).map((x) => ({
-        en: String(x.en).trim(),
-        zh: String(x.zh).trim()
-      })),
-      vocabulary: parsed.vocabulary.slice(0, 60).map((x) => ({
-        word: String(x.word || "").trim(),
-        part_of_speech: String(x.part_of_speech || "").trim(),
-        meaning_zh: String(x.meaning_zh || "").trim()
-      })).filter((x) => x.word && x.meaning_zh)
-    };
+    const summaryOptions = normalizeSummaryOptions(parsed.summary_options);
+    const keywordOptions = normalizeKeywordOptions(parsed.keyword_options);
 
-    if (clean.keywords.length !== 3 || countChars(clean.summary_zh) > 30) {
-      return res.status(502).json({ error: "主旨或關鍵字格式異常，請再分析一次。" });
-    }
+    const clean = {
+      summary_options: summaryOptions,
+      keyword_options: keywordOptions,
+      // Keep the first choice for backward compatibility.
+      summary_zh: summaryOptions[0],
+      keywords: keywordOptions[0],
+      sentences: parsed.sentences.slice(0, 300).map((x) => ({
+        en: cleanText(x.en, 2000),
+        zh: cleanText(x.zh, 2000)
+      })),
+      vocabulary: parsed.vocabulary
+        .slice(0, 60)
+        .map((x) => ({
+          word: cleanText(x.word, 100),
+          part_of_speech: cleanText(x.part_of_speech, 40),
+          meaning_zh: cleanText(x.meaning_zh, 160)
+        }))
+        .filter((x) => x.word && x.meaning_zh)
+    };
 
     res.json(clean);
   } catch (error) {
@@ -242,110 +319,76 @@ Rules:
   }
 });
 
-function safeShortText(value, max) {
-  const text = String(value || "").trim();
-  return text.slice(0, max);
-}
-
-function worksheetTextRun(text, options = {}) {
-  return new TextRun({
-    text,
-    font: "Microsoft JhengHei",
-    size: options.size || 24,
-    bold: Boolean(options.bold)
-  });
-}
-
-function worksheetParagraph(text, options = {}) {
-  return new Paragraph({
-    alignment: options.center ? AlignmentType.CENTER : AlignmentType.LEFT,
-    spacing: { after: options.after ?? 180, line: 360 },
-    children: [worksheetTextRun(text, options)]
-  });
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const templatePath = path.join(__dirname, "public", "PRHW2-template.docx");
 
 app.post("/api/export-word", rateLimit, async (req, res) => {
   try {
-    const summary = safeShortText(req.body?.summary, 100);
+    const summary = cleanText(req.body?.summary, 100);
     const keywords = Array.isArray(req.body?.keywords)
-      ? req.body.keywords.map((x) => safeShortText(x, 40)).filter(Boolean)
+      ? req.body.keywords.map((x) => cleanText(x, 60)).filter(Boolean)
       : [];
     const selectedWords = Array.isArray(req.body?.selectedWords)
       ? req.body.selectedWords.slice(0, 6).map((x) => ({
-          word: safeShortText(x?.word, 80),
-          part_of_speech: safeShortText(x?.part_of_speech, 30),
-          meaning_zh: safeShortText(x?.meaning_zh, 120)
+          word: cleanText(x?.word, 100),
+          part_of_speech: cleanText(x?.part_of_speech, 40),
+          meaning_zh: cleanText(x?.meaning_zh, 160)
         }))
       : [];
 
     if (!summary || countChars(summary) > 30) {
       return res.status(400).json({ error: "文章主旨必須在 30 字內。" });
     }
+
     if (keywords.length !== 3) {
-      return res.status(400).json({ error: "請保留 3 個關鍵字。" });
+      return res.status(400).json({ error: "請保留 3 個關鍵字或關鍵片語。" });
     }
+
     if (selectedWords.length !== 6 || selectedWords.some((x) => !x.word || !x.meaning_zh)) {
       return res.status(400).json({ error: "學習單需要選滿 6 個困難單字。" });
     }
 
-    const tableBorders = {
-      top: { style: BorderStyle.SINGLE, size: 6, color: "B7B7B7" },
-      bottom: { style: BorderStyle.SINGLE, size: 6, color: "B7B7B7" },
-      left: { style: BorderStyle.SINGLE, size: 6, color: "B7B7B7" },
-      right: { style: BorderStyle.SINGLE, size: 6, color: "B7B7B7" },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: "D9D9D9" },
-      insideVertical: { style: BorderStyle.SINGLE, size: 4, color: "D9D9D9" }
-    };
+    if (!fs.existsSync(templatePath)) {
+      console.error("Missing worksheet template:", templatePath);
+      return res.status(500).json({ error: "找不到學習單範本，請確認 PRHW2-template.docx 已放在 public 資料夾。" });
+    }
 
-    const doc = new Document({
-      sections: [
-        {
-          properties: {
-            page: {
-              margin: { top: 900, right: 900, bottom: 900, left: 900 }
-            }
-          },
-          children: [
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              spacing: { after: 360 },
-              children: [worksheetTextRun("PRHW2 學習單", { bold: true, size: 32 })]
-            }),
-            worksheetParagraph("壹、請問『AI-induced Productivity Growth』文章段落的主旨是什麼？（不超過 30 個字）", { bold: true, after: 120 }),
-            worksheetParagraph(summary, { after: 320 }),
-            worksheetParagraph("貳、針對『AI-induced Productivity Growth』文章段落，請你給該文章段落設定三個關鍵字。", { bold: true, after: 120 }),
-            worksheetParagraph(`1. ${keywords[0]}    2. ${keywords[1]}    3. ${keywords[2]}`, { after: 320 }),
-            worksheetParagraph("參、請從『AI-induced Productivity Growth』文章段落之中擷取六個你不懂的單字，確認中文意義，並且將之背起來。", { bold: true, after: 160 }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              borders: tableBorders,
-              rows: [
-                new TableRow({
-                  tableHeader: true,
-                  children: [
-                    new TableCell({ width: { size: 12, type: WidthType.PERCENTAGE }, children: [worksheetParagraph("編號", { bold: true, center: true, after: 0 })] }),
-                    new TableCell({ width: { size: 38, type: WidthType.PERCENTAGE }, children: [worksheetParagraph("單字／片語", { bold: true, center: true, after: 0 })] }),
-                    new TableCell({ width: { size: 50, type: WidthType.PERCENTAGE }, children: [worksheetParagraph("中文意義", { bold: true, center: true, after: 0 })] })
-                  ]
-                }),
-                ...selectedWords.map((item, i) => new TableRow({
-                  children: [
-                    new TableCell({ children: [worksheetParagraph(String(i + 1), { center: true, after: 0 })] }),
-                    new TableCell({ children: [worksheetParagraph(`${item.word}${item.part_of_speech ? ` (${item.part_of_speech})` : ""}`, { after: 0 })] }),
-                    new TableCell({ children: [worksheetParagraph(item.meaning_zh, { after: 0 })] })
-                  ]
-                }))
-              ]
-            })
-          ]
-        }
-      ]
+    const templateBinary = fs.readFileSync(templatePath, "binary");
+    const zip = new PizZip(templateBinary);
+    const doc = new Docxtemplater(zip, {
+      paragraphLoop: true,
+      linebreaks: true
     });
 
-    const buffer = await Packer.toBuffer(doc);
+    const keywordText = keywords.map((keyword, i) => `${i + 1}. ${keyword}`).join("    ");
+    const vocabText = selectedWords
+      .map((item, i) => {
+        const pos = item.part_of_speech ? ` (${item.part_of_speech})` : "";
+        return `${i + 1}. ${item.word}${pos}　${item.meaning_zh}`;
+      })
+      .join("\n");
+
+    doc.render({
+      mainIdea: summary,
+      keywords: keywordText,
+      vocabList: vocabText
+    });
+
+    const buffer = doc.getZip().generate({
+      type: "nodebuffer",
+      compression: "DEFLATE"
+    });
+
     const filename = "PRHW2_學習單_完成版.docx";
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`
+    );
     res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
   } catch (error) {
@@ -358,8 +401,6 @@ app.get("/healthz", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 app.use(express.static(path.join(__dirname, "public")));
 
 app.listen(port, () => {
