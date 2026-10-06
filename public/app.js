@@ -24,6 +24,10 @@
   const keywordPreview = $("#keywordPreview");
   const summaryInput = $("#summaryInput");
   const summaryCount = $("#summaryCount");
+  const summaryOptionLabel = $("#summaryOptionLabel");
+  const summaryShuffleBtn = $("#summaryShuffleBtn");
+  const keywordOptionLabel = $("#keywordOptionLabel");
+  const keywordShuffleBtn = $("#keywordShuffleBtn");
   const keywordInputs = [$("#keyword1"), $("#keyword2"), $("#keyword3")];
   const selectedCount = $("#selectedCount");
   const selectionHint = $("#selectionHint");
@@ -32,7 +36,16 @@
   const exportHint = $("#exportHint");
   const exportStatus = $("#exportStatus");
 
-  let data = { summary_zh: "", keywords: [], sentences: [], vocabulary: [] };
+  let data = {
+    summary_options: [],
+    keyword_options: [],
+    summary_zh: "",
+    keywords: [],
+    sentences: [],
+    vocabulary: []
+  };
+  let summaryOptionIndex = 0;
+  let keywordOptionIndex = 0;
   let index = 0;
   let voices = [];
   let paused = false;
@@ -86,22 +99,63 @@
   $("#newArticleBtn").addEventListener("click", showStart);
   $("#goVocabBtn").addEventListener("click", () => activateTab("vocab"));
 
-  function renderInsights() {
-    summaryPreview.textContent = data.summary_zh || "—";
+  function renderKeywordPreview(keywords) {
     keywordPreview.innerHTML = "";
-    (data.keywords || []).forEach((keyword) => {
+    (keywords || []).forEach((keyword) => {
       const chip = document.createElement("span");
       chip.className = "chip";
       chip.textContent = keyword;
       keywordPreview.appendChild(chip);
     });
+  }
 
-    summaryInput.value = data.summary_zh || "";
-    keywordInputs.forEach((field, i) => {
-      field.value = data.keywords?.[i] || "";
-    });
+  function applySummaryOption(optionIndex) {
+    const options = Array.isArray(data.summary_options) && data.summary_options.length
+      ? data.summary_options
+      : [data.summary_zh].filter(Boolean);
+
+    if (!options.length) return;
+    summaryOptionIndex = ((optionIndex % options.length) + options.length) % options.length;
+    const value = options[summaryOptionIndex] || "";
+    summaryInput.value = value;
+    summaryPreview.textContent = value || "—";
+    summaryOptionLabel.textContent = `版本 ${summaryOptionIndex + 1} / ${options.length}`;
+    summaryShuffleBtn.disabled = options.length <= 1;
     updateSummaryCount();
   }
+
+  function applyKeywordOption(optionIndex) {
+    const options = Array.isArray(data.keyword_options) && data.keyword_options.length
+      ? data.keyword_options
+      : [data.keywords].filter((x) => Array.isArray(x) && x.length);
+
+    if (!options.length) return;
+    keywordOptionIndex = ((optionIndex % options.length) + options.length) % options.length;
+    const keywords = options[keywordOptionIndex] || [];
+
+    keywordInputs.forEach((field, i) => {
+      field.value = keywords[i] || "";
+    });
+    renderKeywordPreview(keywords);
+    keywordOptionLabel.textContent = `第 ${keywordOptionIndex + 1} / ${options.length} 組`;
+    keywordShuffleBtn.disabled = options.length <= 1;
+    updateExportState();
+  }
+
+  function renderInsights() {
+    summaryOptionIndex = 0;
+    keywordOptionIndex = 0;
+    applySummaryOption(0);
+    applyKeywordOption(0);
+  }
+
+  summaryShuffleBtn.addEventListener("click", () => {
+    applySummaryOption(summaryOptionIndex + 1);
+  });
+
+  keywordShuffleBtn.addEventListener("click", () => {
+    applyKeywordOption(keywordOptionIndex + 1);
+  });
 
   function updateSummaryCount() {
     const length = countChars(summaryInput.value);
@@ -118,13 +172,7 @@
   keywordInputs.forEach((field) => {
     field.addEventListener("input", () => {
       const keywords = keywordInputs.map((x) => x.value.trim()).filter(Boolean);
-      keywordPreview.innerHTML = "";
-      keywords.forEach((keyword) => {
-        const chip = document.createElement("span");
-        chip.className = "chip";
-        chip.textContent = keyword;
-        keywordPreview.appendChild(chip);
-      });
+      renderKeywordPreview(keywords);
       updateExportState();
     });
   });
@@ -505,9 +553,11 @@
       if (!response.ok) throw new Error(body.error || "目前無法分析文章。" );
 
       data = body;
+      summaryOptionIndex = 0;
+      keywordOptionIndex = 0;
       index = 0;
       difficultWords.clear();
-      stats.textContent = `${data.sentences.length} 句 · ${data.vocabulary.length} 個重點單字 · 已整理學習單`;
+      stats.textContent = `${data.sentences.length} 句 · ${data.vocabulary.length} 個重點單字 · 8 種主旨表達 · 8 組關鍵字`;
 
       renderInsights();
       renderSentences();

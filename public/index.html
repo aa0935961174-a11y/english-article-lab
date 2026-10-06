@@ -42,11 +42,11 @@
 
       <section class="insight-strip" aria-label="文章重點">
         <div class="insight-main">
-          <span class="mini-label">30 字內主旨</span>
+          <span class="mini-label">30 字內主旨 · 可切換 8 種表達</span>
           <p id="summaryPreview" class="summary-preview"></p>
         </div>
         <div class="keyword-preview-wrap">
-          <span class="mini-label">3 個關鍵字</span>
+          <span class="mini-label">3 個關鍵字／短片語 · 可切換 8 組</span>
           <div id="keywordPreview" class="chips"></div>
         </div>
       </section>
@@ -153,9 +153,13 @@
             <div class="question-number">壹</div>
             <div class="worksheet-content">
               <h3>文章主旨</h3>
-              <p class="muted">不超過 30 個字，可自行修改。</p>
+              <p class="muted">AI 會先準備 8 種不同表達；全部都必須符合原文且不超過 30 個字。</p>
               <textarea id="summaryInput" class="worksheet-textarea" maxlength="60"></textarea>
-              <div class="field-meta"><span id="summaryCount">0 / 30</span></div>
+              <div class="choice-tools">
+                <span id="summaryOptionLabel" class="option-position">版本 1 / 8</span>
+                <button id="summaryShuffleBtn" class="refresh-choice" type="button">↻ 換個表達</button>
+                <span id="summaryCount" class="char-meter">0 / 30</span>
+              </div>
             </div>
           </article>
 
@@ -163,11 +167,15 @@
             <div class="question-number">貳</div>
             <div class="worksheet-content">
               <h3>三個關鍵字</h3>
-              <p class="muted">AI 已先整理，可再調整。</p>
+              <p class="muted">每組 3 個，可是單字或短片語；AI 會準備 8 組與文章直接相關的選項。</p>
               <div class="keyword-inputs">
-                <input id="keyword1" class="keyword-input" maxlength="40" />
-                <input id="keyword2" class="keyword-input" maxlength="40" />
-                <input id="keyword3" class="keyword-input" maxlength="40" />
+                <input id="keyword1" class="keyword-input" maxlength="60" />
+                <input id="keyword2" class="keyword-input" maxlength="60" />
+                <input id="keyword3" class="keyword-input" maxlength="60" />
+              </div>
+              <div class="choice-tools keyword-choice-tools">
+                <span id="keywordOptionLabel" class="option-position">第 1 / 8 組</span>
+                <button id="keywordShuffleBtn" class="refresh-choice" type="button">↻ 換一組</button>
               </div>
             </div>
           </article>

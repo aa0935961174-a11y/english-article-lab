@@ -510,3 +510,42 @@ tr:last-child td { border-bottom: 0; }
     gap: 10px;
   }
 }
+
+/* Multiple worksheet answer choices */
+.choice-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+.option-position,
+.char-meter {
+  color: var(--muted);
+  font-size: 12px;
+}
+.char-meter {
+  margin-left: auto;
+}
+.refresh-choice {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 12px;
+  font-weight: 700;
+}
+.refresh-choice:hover {
+  background: var(--soft);
+}
+.refresh-choice:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.keyword-choice-tools {
+  justify-content: flex-start;
+}
+@media (max-width: 520px) {
+  .char-meter { margin-left: 0; width: 100%; }
+}
