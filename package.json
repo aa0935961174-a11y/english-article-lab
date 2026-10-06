@@ -1,6 +1,6 @@
 {
   "name": "english-article-lab",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,9 @@
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "openai": "^6.7.0",
-    "docx": "^9.8.1"
+    "docx": "^9.8.1",
+    "docxtemplater": "^3.66.0",
+    "pizzip": "^3.1.8"
   },
   "description": "English article learning web app with translation, TTS, vocabulary, worksheet summary, keyword selection, difficult-word selection, and Word export."
 }
