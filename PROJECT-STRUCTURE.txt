@@ -1,0 +1,17 @@
+english-article-lab/
+├── public/
+│   ├── index.html      # 網頁介面
+│   ├── styles.css      # 極簡樣式
+│   └── app.js          # 前端互動與朗讀
+├── server.mjs          # Express + OpenAI API 後端
+├── package.json
+├── .env.example
+├── .gitignore
+├── render.yaml         # Render Blueprint
+├── .github/
+│   └── workflows/
+│       └── check.yml   # GitHub 自動語法檢查
+├── README.md
+├── DEPLOY.md
+├── ONE-CLICK-DEPLOY.md
+└── RAILWAY-DEPLOY.md
