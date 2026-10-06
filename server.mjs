@@ -147,6 +147,18 @@ app.post("/api/analyze", rateLimit, async (req, res) => {
     if (article.length > 24000) {
       return res.status(400).json({ error: "文章太長，請控制在約 24,000 個字元以內。" });
     }
+    const analyzeTime = new Intl.DateTimeFormat("zh-TW", {
+  timeZone: "Asia/Taipei",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false
+}).format(new Date());
+
+console.log(`[AI ANALYZE] ${analyzeTime}`);
 
     const instructions = `
 You are an English learning assistant for Traditional Chinese learners in Taiwan.
